@@ -1,0 +1,93 @@
+name: 'Val QA scan'
+description: 'Run Val (the QA agent for vibecoded apps) against a preview URL and post the findings as a PR comment.'
+author: 'Nyx Intelligence'
+branding:
+  icon: 'check-circle'
+  color: 'green'
+
+inputs:
+  url:
+    description: 'URL to scan. Use the preview deployment URL of the current PR.'
+    required: true
+  license-key:
+    description: 'Your Val license key (starts with vk_...). Get one at https://val.nyx-intelligence.com. Store it as a repo secret and pass it here.'
+    required: true
+  max-pages:
+    description: 'Maximum number of same-origin pages to crawl.'
+    required: false
+    default: '12'
+  devices:
+    description: 'Comma-separated device profiles (e.g. "desktop,iPhone 14"). Single device = no multi-device scan.'
+    required: false
+    default: 'desktop'
+  fail-on:
+    description: 'Severity that fails the action: "high", "medium", "low", or "never".'
+    required: false
+    default: 'high'
+  comment:
+    description: 'Post the report as a PR comment ("true" or "false").'
+    required: false
+    default: 'true'
+  github-token:
+    description: 'GITHUB_TOKEN used to post the PR comment.'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  high:
+    description: 'Number of high-severity findings.'
+    value: ${{ steps.severity.outputs.high }}
+  medium:
+    description: 'Number of medium-severity findings.'
+    value: ${{ steps.severity.outputs.medium }}
+  low:
+    description: 'Number of low-severity findings.'
+    value: ${{ steps.severity.outputs.low }}
+  report-path:
+    description: 'Path to the raw report file.'
+    value: ${{ steps.scan.outputs.report-path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install Val + Playwright
+      shell: bash
+      run: |
+        npm install -g @nyx-intelligence/val-mcp@latest playwright
+        playwright install --with-deps chromium
+
+    - name: Run Val scan
+      id: scan
+      shell: bash
+      # All inputs go through env: + double-quoted "$VAR" expansion so a
+      # malicious caller cannot break out of the command line (e.g. a
+      # consumer that passes `with: url: ${{ github.event.pull_request.title }}`).
+      env:
+        INPUT_URL: ${{ inputs.url }}
+        INPUT_MAX_PAGES: ${{ inputs.max-pages }}
+        INPUT_DEVICES: ${{ inputs.devices }}
+        VAL_LICENSE_KEY: ${{ inputs.license-key }}
+      run: |
+        if [ "$INPUT_DEVICES" = "desktop" ] || [ -z "$INPUT_DEVICES" ]; then
+          val-mcp scan "$INPUT_URL" "$INPUT_MAX_PAGES" > val-report.txt
+        else
+          val-mcp scan-devices "$INPUT_URL" "$INPUT_DEVICES" "$INPUT_MAX_PAGES" > val-report.txt
+        fi
+        cat val-report.txt
+        echo "report-path=val-report.txt" >> "$GITHUB_OUTPUT"
+
+    - name: Post PR comment
+      if: github.event_name == 'pull_request' && inputs.comment == 'true'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: node "$ACTION_PATH/scripts/post-comment.js" val-report.txt
+
+    - name: Set severity outputs + gate
+      id: severity
+      shell: bash
+      env:
+        FAIL_ON: ${{ inputs.fail-on }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: node "$ACTION_PATH/scripts/check-severity.js" val-report.txt "$FAIL_ON"

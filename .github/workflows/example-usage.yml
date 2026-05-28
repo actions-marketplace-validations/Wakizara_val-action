@@ -1,0 +1,30 @@
+# Example workflow showing how a consumer repo would use val-action.
+# This file is for documentation only — it is not executed in this repo.
+name: Val QA (example)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Replace this with your real preview deploy step.
+      - name: Deploy preview
+        id: deploy
+        run: echo "url=https://example-pr-123.vercel.app" >> "$GITHUB_OUTPUT"
+
+      - name: Val scan
+        uses: nyx-intelligence/val-action@v1
+        with:
+          url: ${{ steps.deploy.outputs.url }}
+          license-key: ${{ secrets.VAL_LICENSE_KEY }}
+          devices: 'desktop,iPhone 14'
+          fail-on: 'high'
